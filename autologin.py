@@ -343,12 +343,31 @@ def cmd_log():
             pass
 
 
+def cmd_logout():
+    print("Fetching session token...")
+    page = fetch(f"{PORTAL}/keepalive?")
+    if not page:
+        print("Couldn't reach portal — are you on campus network?")
+        sys.exit(1)
+    m = re.search(r'href="([^"]*logout[^"]*)"', page)
+    if not m:
+        print("No active session found.")
+        sys.exit(1)
+    logout_url = m.group(1)
+    resp = fetch(logout_url)
+    if resp:
+        print("Logged out.")
+    else:
+        print("Logout request failed.")
+
+
 def cmd_uninstall():
     uninstall_service()
 
 
 COMMANDS = {
     "setup": cmd_setup, "run": cmd_run, "login": cmd_login,
+    "logout": cmd_logout,
     "status": cmd_status, "start": cmd_start, "stop": cmd_stop,
     "restart": cmd_restart, "log": cmd_log, "uninstall": cmd_uninstall,
 }
@@ -363,6 +382,7 @@ Commands:
   restart    Restart the service
   log        Show last 20 lines (add -f to follow live)
   login      Test a single login attempt
+  logout     Log out of the portal
   uninstall  Remove autostart"""
 
 if __name__ == "__main__":

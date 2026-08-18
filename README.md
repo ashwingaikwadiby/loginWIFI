@@ -9,22 +9,25 @@ Auto-login to IIT Goa campus WiFi. Runs in background, detects when internet dro
 ```bash
 git clone https://github.com/ashwingaikwadiby/loginWIFI.git
 cd loginWIFI
-python3 autologin.py setup
+python autologin.py setup
 ```
+
+> **Note:** Use `python` or `python3` — whichever works on your system.
 
 `setup` will ask for your roll number and password, then install autostart so it runs on boot.
 
 ## Commands
 
 ```
-python3 autologin.py status     # check if running
-python3 autologin.py start      # start the service
-python3 autologin.py stop       # stop the service
-python3 autologin.py restart    # restart
-python3 autologin.py log        # last 20 log lines
-python3 autologin.py log -f     # follow log live
-python3 autologin.py login      # test a single login
-python3 autologin.py uninstall  # remove autostart
+python autologin.py status     # check if running
+python autologin.py start      # start the service
+python autologin.py stop       # stop the service
+python autologin.py restart    # restart
+python autologin.py log        # last 20 log lines
+python autologin.py log -f     # follow log live
+python autologin.py login      # test a single login
+python autologin.py logout     # log out of the portal
+python autologin.py uninstall  # remove autostart
 ```
 
 Linux/macOS shortcut (after setup): `wifi status`, `wifi log`, etc.
@@ -36,5 +39,5 @@ Every 5 seconds, it pings a connectivity check URL. If it fails, it fetches the 
 ## Uninstall
 
 ```bash
-python3 autologin.py uninstall
+python autologin.py uninstall
 ```
