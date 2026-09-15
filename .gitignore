@@ -2,3 +2,4 @@
 .pid
 autologin.log
 autologin.sh
+__pycache__/

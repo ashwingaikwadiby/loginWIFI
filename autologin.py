@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""IIT Goa WiFi auto-login — keeps you authenticated on the campus Fortinet portal."""
+"""IIT Goa WiFi auto-login — keeps you authenticated on the campus Palo Alto portal."""
 
 import sys, os, time, re, ssl, subprocess, platform, signal, getpass
-from urllib.request import Request, build_opener, HTTPSHandler
+from urllib.request import Request, build_opener, HTTPSHandler, HTTPCookieProcessor
 from urllib.parse import urlencode
 from pathlib import Path
 from datetime import datetime
@@ -12,15 +12,14 @@ ENV_FILE = DIR / ".env"
 LOG_FILE = DIR / "autologin.log"
 PID_FILE = DIR / ".pid"
 
-PORTAL = "https://firewall.iitgoa.ac.in:1003"
 CHECK_URL = "http://connectivitycheck.gstatic.com/generate_204"
 INTERVAL = 5
 
-# Firewall uses self-signed cert
+# Firewall uses self-signed cert; portal ties preauthid to a SESSID cookie
 _ssl = ssl.create_default_context()
 _ssl.check_hostname = False
 _ssl.verify_mode = ssl.CERT_NONE
-_opener = build_opener(HTTPSHandler(context=_ssl))
+_opener = build_opener(HTTPSHandler(context=_ssl), HTTPCookieProcessor())
 
 SYSTEM = platform.system()
 
@@ -72,45 +71,46 @@ def is_online():
 
 
 def get_login_page():
-    page = fetch(f"{PORTAL}/login?")
-    if page and "magic" in page:
-        return page
-    # When unauthenticated, firewall intercepts HTTP and redirects to /fgtauth?...
+    # When unauthenticated, firewall redirects HTTP to https://firewall...:6082/php/uid.php?...
     try:
         with _opener.open(CHECK_URL, timeout=10) as r:
-            if "firewall" in r.url:
-                log(f"Following redirect: {r.url}")
-                return fetch(r.url)
+            if r.url != CHECK_URL:
+                return r.url, r.read().decode("utf-8", errors="replace")
     except Exception:
         pass
-    return None
+    return None, None
 
 
 def do_login(username, password):
-    page = get_login_page()
+    url, page = get_login_page()
     if not page:
         log("FAIL: couldn't reach portal")
         return False
 
-    m = re.search(r'name="magic" value="([^"]+)"', page)
+    # Page JS fills preauthid on submit; it changes on every page load
+    m = re.search(r'preauthid\.value = "([^"]*)"', page)
     if not m:
-        log("FAIL: no magic token (already logged in?)")
+        log(f"FAIL: unexpected portal page at {url}")
         return False
 
-    redir = re.search(r'name="4Tredir" value="([^"]+)"', page)
-    redir = redir.group(1) if redir else f"{PORTAL}/login?"
-
-    resp = fetch(f"{PORTAL}/", data={
-        "4Tredir": redir,
-        "magic": m.group(1),
-        "username": username,
-        "password": password,
+    # Form has no action attribute, so it posts back to the page URL (keeps token=)
+    resp = fetch(url, data={
+        "inputStr": "",
+        "escapeUser": username.replace("\\", "\\\\"),
+        "preauthid": m.group(1),
+        "user": username,
+        "passwd": password,
+        "ok": "Login",
     })
+    if resp is None:
+        log("FAIL: couldn't reach portal")
+        return False
 
-    if resp and "keepalive" in resp.lower():
+    if "User Authenticated" in resp:
         log("OK: logged in")
         return True
-    log("FAIL: login rejected")
+    err = re.search(r'var respMsg = "([^"]+)"', resp)
+    log(f"FAIL: login rejected: {err.group(1) if err else 'unknown response'}")
     return False
 
 
@@ -168,7 +168,6 @@ def install_service():
             '  </array>\n'
             '  <key>RunAtLoad</key><true/>\n'
             '  <key>KeepAlive</key><true/>\n'
-            f'  <key>StandardOutPath</key><string>{LOG_FILE}</string>\n'
             f'  <key>StandardErrorPath</key><string>{LOG_FILE}</string>\n'
             '</dict></plist>')
         subprocess.run(["launchctl", "load",
@@ -253,6 +252,9 @@ def cmd_run():
 
 def cmd_login():
     username, password = load_creds()
+    if is_online():
+        print("Already online — nothing to do.")
+        return
     print("Testing login...")
     if do_login(username, password):
         print("Success!")
@@ -265,9 +267,10 @@ def cmd_status():
         subprocess.run(["systemctl", "--user", "status",
                         "wifi-autologin.service", "--no-pager"])
     elif SYSTEM == "Darwin":
+        # Loaded-but-crashing jobs still return 0; only running ones have a PID
         r = subprocess.run(["launchctl", "list", "com.iitgoa.wifi-autologin"],
-                           capture_output=True)
-        print("Running" if r.returncode == 0 else "Not running")
+                           capture_output=True, text=True)
+        print("Running" if '"PID"' in r.stdout else "Not running")
     else:
         if PID_FILE.exists():
             pid = int(PID_FILE.read_text().strip())
@@ -343,31 +346,12 @@ def cmd_log():
             pass
 
 
-def cmd_logout():
-    print("Fetching session token...")
-    page = fetch(f"{PORTAL}/keepalive?")
-    if not page:
-        print("Couldn't reach portal — are you on campus network?")
-        sys.exit(1)
-    m = re.search(r'href="([^"]*logout[^"]*)"', page)
-    if not m:
-        print("No active session found.")
-        sys.exit(1)
-    logout_url = m.group(1)
-    resp = fetch(logout_url)
-    if resp:
-        print("Logged out.")
-    else:
-        print("Logout request failed.")
-
-
 def cmd_uninstall():
     uninstall_service()
 
 
 COMMANDS = {
     "setup": cmd_setup, "run": cmd_run, "login": cmd_login,
-    "logout": cmd_logout,
     "status": cmd_status, "start": cmd_start, "stop": cmd_stop,
     "restart": cmd_restart, "log": cmd_log, "uninstall": cmd_uninstall,
 }
@@ -382,7 +366,6 @@ Commands:
   restart    Restart the service
   log        Show last 20 lines (add -f to follow live)
   login      Test a single login attempt
-  logout     Log out of the portal
   uninstall  Remove autostart"""
 
 if __name__ == "__main__":
